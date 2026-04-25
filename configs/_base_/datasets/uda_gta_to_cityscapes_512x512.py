@@ -5,7 +5,7 @@
 
 # dataset settings
 dataset_type = 'CityscapesDataset'
-data_root = '/home/Hung_Data/HungData/mmseg_data/Datasets/cityscapes/'
+data_root = '/home/ubuntu/thien/dataset/'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 crop_size = (512, 512)
@@ -57,25 +57,25 @@ data = dict(
         type='UDADataset',
         source=dict(
             type='GTADataset',
-            data_root='/home/Hung_Data/HungData/mmseg_data/Datasets/gta',
+            data_root='/home/ubuntu/thien/dataset/gta',
             img_dir='images',
             ann_dir='labels',
             pipeline=gta_train_pipeline),
         target=dict(
             type='CityscapesDataset',
-            data_root='/home/Hung_Data/HungData/mmseg_data/Datasets/cityscapes/',
+            data_root='/home/ubuntu/thien/dataset/cityscapes/',
             img_dir='leftImg8bit/train',
             ann_dir='gtFine/train',
             pipeline=cityscapes_train_pipeline)),
     val=dict(
         type='CityscapesDataset',
-        data_root='/home/Hung_Data/HungData/mmseg_data/Datasets/cityscapes/',
+        data_root='/home/ubuntu/thien/dataset/cityscapes/',
         img_dir='leftImg8bit/val',
         ann_dir='gtFine/val',
         pipeline=test_pipeline),
     test=dict(
         type='CityscapesDataset',
-        data_root='data/cityscapes/',
+        data_root='/home/ubuntu/thien/dataset/cityscapes/',
         img_dir='leftImg8bit/val',
         ann_dir='gtFine/val',
         pipeline=test_pipeline))

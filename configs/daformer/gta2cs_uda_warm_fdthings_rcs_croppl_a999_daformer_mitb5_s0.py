@@ -18,18 +18,33 @@ _base_ = [
 ]
 # Random Seed
 seed = 0
+
+model = dict(
+    neck=dict(
+        type='DeformableCrossDomainAttNeck',
+        rescale=0.2,
+        key_query_num_convs=2,
+        out_cat_and_conv=True,
+        # Optional: explicitly define in_channels for maing stage sizes
+        in_channels=[64, 128, 320, 512],
+        conv_cfg=None,
+        norm_cfg=dict(type='BN', requires_grad=True),
+        act_cfg=dict(type='LeakyReLU')),
+)
 # Modifications to Basic UDA
 uda = dict(
     # Increased Alpha
     alpha=0.999,
     # Thing-Class Feature Distance
-    imnet_feature_dist_lambda=0.005,
-    imnet_feature_dist_classes=[6, 7, 11, 12, 13, 14, 15, 16, 17, 18],
-    imnet_feature_dist_scale_min_ratio=0.75,
+    # imnet_feature_dist_lambda=0.005,
+    # imnet_feature_dist_classes=[6, 7, 11, 12, 13, 14, 15, 16, 17, 18],
+    # imnet_feature_dist_scale_min_ratio=0.75,
     # Pseudo-Label Crop
     pseudo_weight_ignore_top=15,
     pseudo_weight_ignore_bottom=120)
 data = dict(
+    samples_per_gpu=2,
+    workers_per_gpu=4,
     train=dict(
         # Rare Class Sampling
         rare_class_sampling=dict(

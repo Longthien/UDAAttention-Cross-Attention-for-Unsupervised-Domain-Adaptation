@@ -6,7 +6,7 @@
 _base_ = [
     '../_base_/default_runtime.py',
     # DAFormer Network Architecture
-    '../_base_/ours_model/efficientvim_udaneck_daformer.py',
+    '../_base_/models/daformer_sepaspp_mitb3.py',
     # GTA->Cityscapes Data Loading
     '../_base_/datasets/uda_gta_to_cityscapes_512x512.py',
     # Basic UDA Self-Training
@@ -18,26 +18,20 @@ _base_ = [
 ]
 # Random Seed
 seed = 0
-
-model = dict(
-    neck=dict(
-        type='CrossDomainAttNeck',
-        rescale=0.5,))
 # Modifications to Basic UDA
 uda = dict(
-    type='UDANeck_DACS',
     # Increased Alpha
     alpha=0.999,
     # Thing-Class Feature Distance
-    imnet_feature_dist_lambda=0.005,
-    imnet_feature_dist_classes=[6, 7, 11, 12, 13, 14, 15, 16, 17, 18],
-    imnet_feature_dist_scale_min_ratio=0.75,
+    # imnet_feature_dist_lambda=0.005,
+    # imnet_feature_dist_classes=[6, 7, 11, 12, 13, 14, 15, 16, 17, 18],
+    # imnet_feature_dist_scale_min_ratio=0.75,
     # Pseudo-Label Crop
     pseudo_weight_ignore_top=15,
     pseudo_weight_ignore_bottom=120)
 data = dict(
     samples_per_gpu=2,
-    workers_per_gpu=4,
+    workers_per_gpu=2,
     train=dict(
         # Rare Class Sampling
         rare_class_sampling=dict(
@@ -45,11 +39,10 @@ data = dict(
 # Optimizer Hyperparameters
 optimizer_config = None
 optimizer = dict(
-    lr=2e-04,
+    lr=6e-05,
     paramwise_cfg=dict(
         custom_keys=dict(
-            head=dict(lr_mult=5.0),
-            neck=dict(lr_mult=5.0),
+            head=dict(lr_mult=10.0),
             pos_block=dict(decay_mult=0.0),
             norm=dict(decay_mult=0.0))))
 n_gpus = 1
@@ -58,11 +51,11 @@ runner = dict(type='IterBasedRunner', max_iters=40000)
 checkpoint_config = dict(by_epoch=False, interval=40000, max_keep_ckpts=1)
 evaluation = dict(interval=2000, metric='mIoU', save_best='mIoU')
 # Meta Information for Result Analysis
-name = 'lr-2e-04-head_neck_mlt5_swap_src_tgt_feat-udaneck_efficient_daformer'
-exp = 'EfficientViM-UDANeck'
+name = 'gta2cs_uda_warm_fdthings_rcs_croppl_a999_daformer_mitb3_s0'
+exp = 'basic-mitb3'
 name_dataset = 'gta2cityscapes'
-name_architecture = 'daformer_sepaspp_mitb5'
-name_encoder = 'mitb5'
+name_architecture = 'daformer_sepaspp_mitb3'
+name_encoder = 'mitb3'
 name_decoder = 'daformer_sepaspp'
 name_uda = 'dacs_a999_fd_things_rcs0.01_cpl'
 name_opt = 'adamw_6e-05_pmTrue_poly10warm_1x2_40k'

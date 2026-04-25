@@ -27,6 +27,7 @@ from mmseg.models.utils.dacs_transforms import (denorm, get_class_masks,
                                                 get_mean_std, strong_transform)
 from mmseg.models.utils.visualization import subplotimg
 from mmseg.utils.utils import downscale_label_ratio
+from mmseg.models.losses.contrastive_loss import CentroidAwareInfoNCELoss
 
 
 def _params_equal(ema_model, model):
@@ -70,6 +71,7 @@ class UDANeck_DACS(UDADecorator):
         self.color_jitter_p = cfg['color_jitter_probability']
         self.debug_img_interval = cfg['debug_img_interval']
         self.print_grad_magnitude = cfg['print_grad_magnitude']
+        nce_loss_weight = cfg['nce_loss_weight'] if 'nce_loss_weight' in cfg else 0.1
         assert self.mix == 'class'
 
         self.debug_fdist_mask = None
@@ -83,6 +85,8 @@ class UDANeck_DACS(UDADecorator):
             self.imnet_model = build_segmentor(deepcopy(cfg['model']))
         else:
             self.imnet_model = None
+
+        self.centroid_nce_loss = CentroidAwareInfoNCELoss(loss_weight=nce_loss_weight)
 
     def get_ema_model(self):
         return get_module(self.ema_model)
@@ -230,40 +234,7 @@ class UDANeck_DACS(UDADecorator):
             'std': stds[0].unsqueeze(0)
         }
         
-        source_img = torch.cat([img, target_img.clone()], dim=0)
-        
-
-        # Train on source images
-        clean_losses = self.get_model().forward_train(
-            source_img, img_metas, gt_semantic_seg, return_feat=True)
-        src_feat = clean_losses.pop('features')
-        clean_loss, clean_log_vars = self._parse_losses(clean_losses)
-        log_vars.update(clean_log_vars)
-        clean_loss.backward(retain_graph=self.enable_fdist)
-        if self.print_grad_magnitude:
-            params = self.get_model().backbone.parameters()
-            seg_grads = [
-                p.grad.detach().clone() for p in params if p.grad is not None
-            ]
-            grad_mag = calc_grad_magnitude(seg_grads)
-            mmcv.print_log(f'Seg. Grad.: {grad_mag}', 'mmseg')
-
-        # ImageNet feature distance
-        if self.enable_fdist:
-            feat_loss, feat_log = self.calc_feat_dist(source_img, gt_semantic_seg,
-                                                      src_feat)
-            feat_loss.backward()
-            log_vars.update(add_prefix(feat_log, 'src'))
-            if self.print_grad_magnitude:
-                params = self.get_model().backbone.parameters()
-                fd_grads = [
-                    p.grad.detach() for p in params if p.grad is not None
-                ]
-                fd_grads = [g2 - g1 for g1, g2 in zip(seg_grads, fd_grads)]
-                grad_mag = calc_grad_magnitude(fd_grads)
-                mmcv.print_log(f'Fdist Grad.: {grad_mag}', 'mmseg')
-
-        # Generate pseudo-label
+        # Generate pseudo-label early for centroid nce loss
         for m in self.get_ema_model().modules():
             if isinstance(m, _DropoutNd):
                 m.training = False
@@ -296,6 +267,50 @@ class UDANeck_DACS(UDADecorator):
         if self.psweight_ignore_bottom > 0:
             pseudo_weight[:, -self.psweight_ignore_bottom:, :] = 0
         gt_pixel_weight = torch.ones((pseudo_weight.shape), device=dev)
+
+        source_img = torch.cat([img, target_img.clone()], dim=0)
+        
+        # Train on source images
+        clean_losses = self.get_model().forward_train(
+            source_img, img_metas, gt_semantic_seg, return_feat=True)
+        src_feat = clean_losses.pop('features')
+
+        # Calculate Centroid-Aware InfoNCE Loss
+        if hasattr(self.get_model(), 'neck') and hasattr(self.get_model().neck, 'target_features'):
+            target_features = self.get_model().neck.target_features
+            if len(src_feat) > 0 and len(target_features) > 0:
+                f_aug = src_feat[-1]
+                f_t = target_features[-1]
+                loss_centroid_nce = self.centroid_nce_loss(f_aug, f_t, gt_semantic_seg, pseudo_label[:batch_size])
+                clean_losses['loss_centroid_nce'] = loss_centroid_nce
+
+        clean_loss, clean_log_vars = self._parse_losses(clean_losses)
+        log_vars.update(clean_log_vars)
+        clean_loss.backward(retain_graph=self.enable_fdist)
+        if self.print_grad_magnitude:
+            params = self.get_model().backbone.parameters()
+            seg_grads = [
+                p.grad.detach().clone() for p in params if p.grad is not None
+            ]
+            grad_mag = calc_grad_magnitude(seg_grads)
+            mmcv.print_log(f'Seg. Grad.: {grad_mag}', 'mmseg')
+
+        # ImageNet feature distance
+        if self.enable_fdist:
+            feat_loss, feat_log = self.calc_feat_dist(source_img, gt_semantic_seg,
+                                                      src_feat)
+            feat_loss.backward()
+            log_vars.update(add_prefix(feat_log, 'src'))
+            if self.print_grad_magnitude:
+                params = self.get_model().backbone.parameters()
+                fd_grads = [
+                    p.grad.detach() for p in params if p.grad is not None
+                ]
+                fd_grads = [g2 - g1 for g1, g2 in zip(seg_grads, fd_grads)]
+                grad_mag = calc_grad_magnitude(fd_grads)
+                mmcv.print_log(f'Fdist Grad.: {grad_mag}', 'mmseg')
+
+        # Pseudo-labels are already generated above
 
         # Apply mixing
         mixed_img, mixed_lbl = [None] * batch_size, [None] * batch_size

@@ -6,7 +6,7 @@
 # Baseline UDA
 uda = dict(
     type='UDANeck_DACS',
-    alpha=0.99,
+    alpha=0.999,
     pseudo_threshold=0.968,
     pseudo_weight_ignore_top=0,
     pseudo_weight_ignore_bottom=0,

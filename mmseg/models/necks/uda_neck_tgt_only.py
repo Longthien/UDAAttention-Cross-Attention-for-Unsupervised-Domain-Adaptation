@@ -1,14 +1,16 @@
 import random
-import torch.nn as nn
+
 import torch
+import torch.nn as nn
 from mmcv.runner import BaseModule
 from timm.models.layers import DropPath
-from ..builder import NECKS
 
+from ..builder import NECKS
 from mmcv.cnn import ConvModule
 from ..utils import SelfAttentionBlock as _SelfAttentionBlock
-
 from mmcv.utils import print_log
+
+
 class SelfAttentionBlock(_SelfAttentionBlock):
     """Self-Attention Module.
 
@@ -55,12 +57,11 @@ class SelfAttentionBlock(_SelfAttentionBlock):
             act_cfg=act_cfg)
 
     def forward(self, query, key):
-        """Forward function."""
         context = super(SelfAttentionBlock, self).forward(query, key)
         return self.output_project(context)
 
 
-class UdaAttentionBlock(BaseModule):
+class TgtOnlyUdaAttentionBlock(BaseModule):
     def __init__(self,
                  channels,
                  isa_channels,
@@ -70,17 +71,9 @@ class UdaAttentionBlock(BaseModule):
                  conv_cfg=None,
                  norm_cfg=None,
                  act_cfg=None,
-                 drop_path=0.,):
-        super(UdaAttentionBlock, self).__init__()
-        
+                 drop_path=0.):
+        super(TgtOnlyUdaAttentionBlock, self).__init__()
 
-        self.encoder = SelfAttentionBlock(
-            channels,
-            isa_channels,
-            key_query_num_convs=key_query_num_convs,
-            conv_cfg=conv_cfg,
-            norm_cfg=norm_cfg,
-            act_cfg=act_cfg)
         self.decoder = SelfAttentionBlock(
             channels,
             isa_channels,
@@ -95,7 +88,7 @@ class UdaAttentionBlock(BaseModule):
             conv_cfg=conv_cfg,
             norm_cfg=norm_cfg,
             act_cfg=act_cfg)
-        
+
         self.rescale = rescale
         self.out_cat_and_conv = out_cat_and_conv
         if out_cat_and_conv:
@@ -107,8 +100,8 @@ class UdaAttentionBlock(BaseModule):
                 norm_cfg=norm_cfg,
                 act_cfg=act_cfg)
 
-        self.drop_path = DropPath(
-            drop_path) if drop_path > 0. else nn.Identity()
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+
     def forward(self, x):
         num_images, C, H, W = x.shape
         if num_images == 1:
@@ -117,25 +110,24 @@ class UdaAttentionBlock(BaseModule):
         else:
             if num_images % 2 != 0:
                 raise ValueError(
-                    'UdaAttentionBlock expects an even number of concatenated '
-                    f'source/target features (2B), but got {num_images}.')
+                    'TgtOnlyUdaAttentionBlock expects an even number of '
+                    f'concatenated source/target features (2B), but got '
+                    f'{num_images}.')
             half = num_images // 2
             x_src = x[:half]
             x_tgt = x[half:]
 
-        enc_out = self.encoder(x_src, x_src)
         dec_out = self.decoder(x_tgt, x_tgt) * self.rescale
-        cross_out = self.mix_att(enc_out, dec_out)
+        cross_out = self.mix_att(x_src, dec_out)
 
         if self.out_cat_and_conv:
-            out = self.out_conv(torch.cat([cross_out, enc_out], dim=1))
+            out = self.out_conv(torch.cat([cross_out, x_src], dim=1))
         else:
-            out = enc_out + cross_out
+            out = x_src + cross_out
 
         out = self.drop_path(out)
         if self.training and random.random() < 0.005:
             print_log(
-                f"Encode: {torch.mean(enc_out)}, {torch.std(enc_out)}, "
                 f"Decode: {torch.mean(dec_out)}, {torch.std(dec_out)}, "
                 f"Cross: {torch.mean(cross_out)}, {torch.std(cross_out)}",
                 'mmseg')
@@ -146,24 +138,26 @@ class UdaAttentionBlock(BaseModule):
 
         return out
 
+
 @NECKS.register_module()
-class CrossDomainAttNeck(BaseModule):
-    def __init__(self, 
-                 in_channels, 
-                 rescale=0.5,
-                 key_query_num_convs=2,
-                out_cat_and_conv=False,
-                conv_cfg=None,
-                 norm_cfg=None,
-                 act_cfg=None,
-                 **kwargs):
-        super(CrossDomainAttNeck, self).__init__()
+class TgtOnlyCrossDomainAttNeck(BaseModule):
+    def __init__(
+            self,
+            in_channels,
+            rescale=0.5,
+            key_query_num_convs=2,
+            out_cat_and_conv=False,
+            conv_cfg=None,
+            norm_cfg=None,
+            act_cfg=None,
+            **kwargs):
+        super(TgtOnlyCrossDomainAttNeck, self).__init__()
 
         self.in_channels = in_channels
         self.uda_blocks = nn.ModuleList([
-            UdaAttentionBlock(
+            TgtOnlyUdaAttentionBlock(
                 channels=in_channels[i],
-                isa_channels=in_channels[i]*2,
+                isa_channels=in_channels[i] * 2,
                 key_query_num_convs=key_query_num_convs,
                 out_cat_and_conv=out_cat_and_conv,
                 rescale=rescale,
@@ -172,16 +166,11 @@ class CrossDomainAttNeck(BaseModule):
                 act_cfg=act_cfg,
                 drop_path=0.1)
             for i in range(len(in_channels))
-        ])  
-        
+        ])
+
     def forward(self, inputs):
         """
         inputs: list of feature maps from backbone
-        each tensor: [2B, C_i, H_i, W_i], where the first B entries correspond to
-        source features and the last B entries correspond to target features.
+        each tensor: [2B, C_i, H_i, W_i], with source first and target second.
         """
-        outputs = []
-        for i, block in enumerate(self.uda_blocks):
-            outputs.append(block(inputs[i]))
-
-        return outputs
+        return [block(inputs[i]) for i, block in enumerate(self.uda_blocks)]
