@@ -28,7 +28,7 @@ from mmseg.models.utils.dacs_transforms import (denorm, get_class_masks,
 from mmseg.models.utils.visualization import subplotimg
 from mmseg.utils.utils import downscale_label_ratio
 from mmseg.models.losses.contrastive_loss import CentroidAwareInfoNCELoss
-
+from mmseg.ops import resize
 
 def _params_equal(ema_model, model):
     for ema_param, param in zip(ema_model.named_parameters(),
@@ -71,7 +71,6 @@ class UDANeck_DACS(UDADecorator):
         self.color_jitter_p = cfg['color_jitter_probability']
         self.debug_img_interval = cfg['debug_img_interval']
         self.print_grad_magnitude = cfg['print_grad_magnitude']
-        nce_loss_weight = cfg['nce_loss_weight'] if 'nce_loss_weight' in cfg else 0.1
         assert self.mix == 'class'
 
         self.debug_fdist_mask = None
@@ -86,7 +85,7 @@ class UDANeck_DACS(UDADecorator):
         else:
             self.imnet_model = None
 
-        self.centroid_nce_loss = CentroidAwareInfoNCELoss(loss_weight=nce_loss_weight)
+        self.centroid_nce_loss = CentroidAwareInfoNCELoss(loss_weight=0.1)
 
     def get_ema_model(self):
         return get_module(self.ema_model)
@@ -247,32 +246,17 @@ class UDANeck_DACS(UDADecorator):
                 data=target_img.clone(),
                 )
         ema_target_img = torch.cat([target_img, aug_target_img], dim=0)
-        ema_logits = self.get_ema_model().encode_decode(
-            ema_target_img, target_img_metas)
+        ema_features, pseudo_label, pseudo_weight, gt_pixel_weight, pseudo_weight_log = \
+            self.generate_pseudo_label(ema_target_img, target_img_metas)
 
-        ema_softmax = torch.softmax(ema_logits.detach(), dim=1)
-        pseudo_prob, pseudo_label = torch.max(ema_softmax, dim=1)
-        ps_large_p = pseudo_prob.ge(self.pseudo_threshold).long() == 1
-        ps_size = np.size(np.array(pseudo_label.cpu()))
-        pseudo_weight = torch.sum(ps_large_p).item() / ps_size
-        pseudo_weight = pseudo_weight * torch.ones(
-            pseudo_prob.shape, device=dev)
-        pseudo_weight_log = torch.mean(pseudo_weight)
-
-        if self.psweight_ignore_top > 0:
-            # Don't trust pseudo-labels in regions with potential
-            # rectification artifacts. This can lead to a pseudo-label
-            # drift from sky towards building or traffic light.
-            pseudo_weight[:, :self.psweight_ignore_top, :] = 0
-        if self.psweight_ignore_bottom > 0:
-            pseudo_weight[:, -self.psweight_ignore_bottom:, :] = 0
-        gt_pixel_weight = torch.ones((pseudo_weight.shape), device=dev)
-
-        source_img = torch.cat([img, target_img.clone()], dim=0)
+        # Inject EMA target features into the student's neck
+        if hasattr(self.get_model(), 'neck'):
+            # Only pass the unaugmented target features to the neck
+            self.get_model().neck.ema_target_features = [f[:batch_size].detach() for f in ema_features]
         
         # Train on source images
         clean_losses = self.get_model().forward_train(
-            source_img, img_metas, gt_semantic_seg, return_feat=True)
+            img, img_metas, gt_semantic_seg, return_feat=True)
         src_feat = clean_losses.pop('features')
 
         # Calculate Centroid-Aware InfoNCE Loss
@@ -297,7 +281,7 @@ class UDANeck_DACS(UDADecorator):
 
         # ImageNet feature distance
         if self.enable_fdist:
-            feat_loss, feat_log = self.calc_feat_dist(source_img, gt_semantic_seg,
+            feat_loss, feat_log = self.calc_feat_dist(img, gt_semantic_seg,
                                                       src_feat)
             feat_loss.backward()
             log_vars.update(add_prefix(feat_log, 'src'))
@@ -328,19 +312,59 @@ class UDANeck_DACS(UDADecorator):
         mixed_img = torch.cat(mixed_img)
         mixed_lbl = torch.cat(mixed_lbl)
         
-        train_mix_img = torch.cat([mixed_img, target_img], dim=0)
+        # train_mix_img = torch.cat([mixed_img, target_img], dim=0)
 
+        # Inject EMA target features into the student's neck
+        if hasattr(self.get_model(), 'neck'):
+            # Only pass the unaugmented target features to the neck
+            self.get_model().neck.ema_target_features = [f[:batch_size].detach() for f in ema_features]
+        
         # Train on mixed images
         mix_losses = self.get_model().forward_train(
-            train_mix_img, img_metas, mixed_lbl, pseudo_weight, return_feat=True)
+            mixed_img, img_metas, mixed_lbl, pseudo_weight, return_feat=True)
         mix_losses.pop('features')
         mix_losses = add_prefix(mix_losses, 'mix')
         mix_loss, mix_log_vars = self._parse_losses(mix_losses)
         log_vars.update(mix_log_vars)
         mix_loss.backward()
 
+        self.debug_visualize(img, target_img, mixed_img, gt_semantic_seg, pseudo_label, mix_masks, mixed_lbl, pseudo_weight, pseudo_weight_log, means, stds, batch_size)
+        self.local_iter += 1
+
+        return log_vars
+
+    def generate_pseudo_label(self, ema_target_img, target_img_metas):
+        dev = ema_target_img.device
+        ema_features = self.get_ema_model().extract_feat(ema_target_img)
+        ema_logits = self.get_ema_model()._decode_head_forward_test(ema_features, target_img_metas)
+        ema_logits = resize(
+            input=ema_logits,
+            size=ema_target_img.shape[2:],
+            mode='bilinear',
+            align_corners=self.get_ema_model().align_corners)
+
+        ema_softmax = torch.softmax(ema_logits.detach(), dim=1)
+        pseudo_prob, pseudo_label = torch.max(ema_softmax, dim=1)
+        ps_large_p = pseudo_prob.ge(self.pseudo_threshold).long() == 1
+        ps_size = np.size(np.array(pseudo_label.cpu()))
+        pseudo_weight = torch.sum(ps_large_p).item() / ps_size
+        pseudo_weight = pseudo_weight * torch.ones(
+            pseudo_prob.shape, device=dev)
+        pseudo_weight_log = torch.mean(pseudo_weight)
+
+        if self.psweight_ignore_top > 0:
+            # Don't trust pseudo-labels in regions with potential
+            # rectification artifacts. This can lead to a pseudo-label
+            # drift from sky towards building or traffic light.
+            pseudo_weight[:, :self.psweight_ignore_top, :] = 0
+        if self.psweight_ignore_bottom > 0:
+            pseudo_weight[:, -self.psweight_ignore_bottom:, :] = 0
+        gt_pixel_weight = torch.ones((pseudo_weight.shape), device=dev)
+
+        return ema_features, pseudo_label, pseudo_weight, gt_pixel_weight, pseudo_weight_log
+
+    def debug_visualize(self, img, target_img, mixed_img, gt_semantic_seg, pseudo_label, mix_masks, mixed_lbl, pseudo_weight, pseudo_weight_log, means, stds, batch_size):
         if self.local_iter % self.debug_img_interval == 0:
-            
             mmcv.utils.print_log(f"Pseudo weight value: {pseudo_weight_log}", 'mmseg')
             out_dir = os.path.join(self.train_cfg['work_dir'],
                                    'class_mix_debug')
@@ -402,6 +426,3 @@ class UDANeck_DACS(UDADecorator):
                     os.path.join(out_dir,
                                  f'{(self.local_iter + 1):06d}_{j}.png'))
                 plt.close()
-        self.local_iter += 1
-
-        return log_vars
