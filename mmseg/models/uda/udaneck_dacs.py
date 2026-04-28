@@ -71,6 +71,8 @@ class UDANeck_DACS(UDADecorator):
         self.color_jitter_p = cfg['color_jitter_probability']
         self.debug_img_interval = cfg['debug_img_interval']
         self.print_grad_magnitude = cfg['print_grad_magnitude']
+        self.nce_loss_weight = cfg['nce_loss_weight']
+        self.nce_loss_temp = cfg['nce_loss_temp']
         assert self.mix == 'class'
 
         self.debug_fdist_mask = None
@@ -84,8 +86,10 @@ class UDANeck_DACS(UDADecorator):
             self.imnet_model = build_segmentor(deepcopy(cfg['model']))
         else:
             self.imnet_model = None
-
-        self.centroid_nce_loss = CentroidAwareInfoNCELoss(loss_weight=0.1)
+        self.enable_nce_loss = False
+        if self.nce_loss_weight > 0:
+            self.centroid_nce_loss = CentroidAwareInfoNCELoss(loss_weight=self.nce_loss_weight, temperature=self.nce_loss_temp)
+            self.enable_nce_loss = True
 
     def get_ema_model(self):
         return get_module(self.ema_model)
@@ -246,13 +250,12 @@ class UDANeck_DACS(UDADecorator):
                 data=target_img.clone(),
                 )
         ema_target_img = torch.cat([target_img, aug_target_img], dim=0)
-        ema_features, pseudo_label, pseudo_weight, gt_pixel_weight, pseudo_weight_log = \
+        ema_features, target_features, pseudo_label, pseudo_weight, gt_pixel_weight, pseudo_weight_log = \
             self.generate_pseudo_label(ema_target_img, target_img_metas)
 
         # Inject EMA target features into the student's neck
         if hasattr(self.get_model(), 'neck'):
-            # Only pass the unaugmented target features to the neck
-            self.get_model().neck.ema_target_features = [f[:batch_size].detach() for f in ema_features]
+            self.get_model().neck.ema_target_features = [f.detach() for f in ema_features]
         
         # Train on source images
         clean_losses = self.get_model().forward_train(
@@ -260,17 +263,18 @@ class UDANeck_DACS(UDADecorator):
         src_feat = clean_losses.pop('features')
 
         # Calculate Centroid-Aware InfoNCE Loss
-        if hasattr(self.get_model(), 'neck') and hasattr(self.get_model().neck, 'target_features'):
-            target_features = self.get_model().neck.target_features
-            if len(src_feat) > 0 and len(target_features) > 0:
-                f_aug = src_feat[-1]
-                f_t = target_features[-1]
-                loss_centroid_nce = self.centroid_nce_loss(f_aug, f_t, gt_semantic_seg, pseudo_label[:batch_size])
-                clean_losses['loss_centroid_nce'] = loss_centroid_nce
+        if self.enable_nce_loss:
+            # if hasattr(self.get_model(), 'neck') and hasattr(self.get_model().neck, 'target_features'):
+            #     target_features = self.get_model().neck.target_features
+                if len(src_feat) > 0 and len(target_features) > 0:
+                    f_aug = src_feat[-1]
+                    f_t = target_features[-1]
+                    loss_centroid_nce = self.centroid_nce_loss(f_aug, f_t, gt_semantic_seg, pseudo_label[:batch_size])
+                    clean_losses['loss_centroid_nce'] = loss_centroid_nce
 
         clean_loss, clean_log_vars = self._parse_losses(clean_losses)
         log_vars.update(clean_log_vars)
-        clean_loss.backward(retain_graph=self.enable_fdist)
+        clean_loss.backward()
         if self.print_grad_magnitude:
             params = self.get_model().backbone.parameters()
             seg_grads = [
@@ -293,8 +297,6 @@ class UDANeck_DACS(UDADecorator):
                 fd_grads = [g2 - g1 for g1, g2 in zip(seg_grads, fd_grads)]
                 grad_mag = calc_grad_magnitude(fd_grads)
                 mmcv.print_log(f'Fdist Grad.: {grad_mag}', 'mmseg')
-
-        # Pseudo-labels are already generated above
 
         # Apply mixing
         mixed_img, mixed_lbl = [None] * batch_size, [None] * batch_size
@@ -322,7 +324,17 @@ class UDANeck_DACS(UDADecorator):
         # Train on mixed images
         mix_losses = self.get_model().forward_train(
             mixed_img, img_metas, mixed_lbl, pseudo_weight, return_feat=True)
-        mix_losses.pop('features')
+        mix_feat = mix_losses.pop('features')
+        if self.enable_nce_loss:
+            # Calculate Centroid-Aware InfoNCE Loss for mix -> target
+            # if hasattr(self.get_model(), 'neck') and hasattr(self.get_model().neck, 'target_features'):
+            #     target_features = self.get_model().neck.target_features
+                if len(mix_feat) > 0 and len(target_features) > 0:
+                    f_aug = mix_feat[-1]
+                    f_t = target_features[-1]
+                    loss_centroid_nce = self.centroid_nce_loss(f_aug, f_t, mixed_lbl[:batch_size], pseudo_label[:batch_size])
+                    mix_losses['loss_centroid_nce'] = loss_centroid_nce
+
         mix_losses = add_prefix(mix_losses, 'mix')
         mix_loss, mix_log_vars = self._parse_losses(mix_losses)
         log_vars.update(mix_log_vars)
@@ -331,17 +343,25 @@ class UDANeck_DACS(UDADecorator):
         self.debug_visualize(img, target_img, mixed_img, gt_semantic_seg, pseudo_label, mix_masks, mixed_lbl, pseudo_weight, pseudo_weight_log, means, stds, batch_size)
         self.local_iter += 1
 
+        # Clean up to avoid holding memory across iterations
+        if hasattr(self.get_model(), 'neck'):
+            self.get_model().neck.target_features = []
+            self.get_model().neck.ema_target_features = None
+
         return log_vars
 
     def generate_pseudo_label(self, ema_target_img, target_img_metas):
         dev = ema_target_img.device
-        ema_features = self.get_ema_model().extract_feat(ema_target_img)
-        ema_logits = self.get_ema_model()._decode_head_forward_test(ema_features, target_img_metas)
-        ema_logits = resize(
-            input=ema_logits,
-            size=ema_target_img.shape[2:],
-            mode='bilinear',
-            align_corners=self.get_ema_model().align_corners)
+        with torch.no_grad():
+            ema_features = self.get_ema_model().backbone(ema_target_img)
+            if self.get_ema_model().with_neck:
+                target_features = self.get_ema_model().neck(ema_features)
+            ema_logits = self.get_ema_model()._decode_head_forward_test(target_features, target_img_metas)
+            ema_logits = resize(
+                input=ema_logits,
+                size=ema_target_img.shape[2:],
+                mode='bilinear',
+                align_corners=self.get_ema_model().align_corners)
 
         ema_softmax = torch.softmax(ema_logits.detach(), dim=1)
         pseudo_prob, pseudo_label = torch.max(ema_softmax, dim=1)
@@ -361,7 +381,7 @@ class UDANeck_DACS(UDADecorator):
             pseudo_weight[:, -self.psweight_ignore_bottom:, :] = 0
         gt_pixel_weight = torch.ones((pseudo_weight.shape), device=dev)
 
-        return ema_features, pseudo_label, pseudo_weight, gt_pixel_weight, pseudo_weight_log
+        return ema_features, target_features, pseudo_label, pseudo_weight, gt_pixel_weight, pseudo_weight_log
 
     def debug_visualize(self, img, target_img, mixed_img, gt_semantic_seg, pseudo_label, mix_masks, mixed_lbl, pseudo_weight, pseudo_weight_log, means, stds, batch_size):
         if self.local_iter % self.debug_img_interval == 0:

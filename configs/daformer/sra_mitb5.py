@@ -21,16 +21,21 @@ seed = 0
 
 model = dict(
     neck=dict(
-        type='DeformableCrossDomainAttNeck',
+        type='CrossDomainAttNeck',
         rescale=0.5,
-        key_query_num_convs=2,
         out_cat_and_conv=False,
+        hybrid_route=False,
         n_points=12,
+        sr_ratios=(8, 4, 2, 1),
         in_channels=[64, 128, 320, 512],
         conv_cfg=None,
         norm_cfg=dict(type='BN', requires_grad=True),
-        act_cfg=dict(type='LeakyReLU')),
-)
+        act_cfg=dict(type='GELU')),
+    test_cfg=dict(
+        mode='slide',
+        batched_slide=True,
+        stride=[512, 512],
+        crop_size=[1024, 1024]))
 
 # Modifications to Basic UDA
 uda = dict(
@@ -43,11 +48,13 @@ uda = dict(
     # Pseudo-Label Crop
     pseudo_weight_ignore_top=15,
     pseudo_weight_ignore_bottom=120,
-    nce_loss_weight=0.1,
+    nce_loss_weight=0.,
+    debug_img_interval=2000,
+
 )
 data = dict(
-    samples_per_gpu=2,
-    workers_per_gpu=4,
+    samples_per_gpu=4,
+    workers_per_gpu=2,
     train=dict(
         # Rare Class Sampling
         rare_class_sampling=dict(
@@ -59,6 +66,7 @@ optimizer = dict(
     paramwise_cfg=dict(
         custom_keys=dict(
             head=dict(lr_mult=10.0),
+            neck=dict(lr_mult=10.0),
             pos_block=dict(decay_mult=0.0),
             norm=dict(decay_mult=0.0))))
 n_gpus = 1
@@ -67,8 +75,8 @@ runner = dict(type='IterBasedRunner', max_iters=40000)
 checkpoint_config = dict(by_epoch=False, interval=40000, max_keep_ckpts=1)
 evaluation = dict(interval=2000, metric='mIoU', save_best='mIoU')
 # Meta Information for Result Analysis
-name = 'add&norm_crossattn'
-exp = 'crossattn'
+name = 'sra_crossattn_correctsra_neck10'
+exp = 'sra'
 name_dataset = 'gta2cityscapes'
 name_architecture = 'daformer_sepaspp_mitb5_crossattn'
 name_encoder = 'mitb5'

@@ -7,78 +7,9 @@ from timm.models.layers import DropPath
 from ..builder import NECKS
 
 from mmcv.cnn import ConvModule, build_norm_layer
-from ..utils import SelfSRAttention
+from ..utils import SelfSRAttentionBlock, LinearDeformableCrossAttnBlock
 from mmcv.utils import print_log
 
-
-class DeformableCrossAttnBlock(nn.Module):
-    """
-    Native PyTorch Deformable Cross-Attention.
-    Computes offsets and weights from Source Query, and samples from Target Key/Value.
-    """
-    def __init__(self, in_channels, n_heads=4, n_points=4, conv_cfg=None, norm_cfg=None, act_cfg=None):
-        super().__init__()
-        self.n_heads = n_heads
-        self.n_points = n_points
-        self.d_head = in_channels // n_heads
-
-        # Predicts both (x,y) offsets and attention weights directly from Query
-        # Output channels = 3 * heads * points (2 for offset, 1 for weight)
-        self.offset_weight_net = nn.Conv2d(in_channels, n_heads * n_points * 3, kernel_size=3, padding=1)
-        
-        # Initialize offsets to 0 so the model starts by looking at the exact spatial counterpart
-        nn.init.constant_(self.offset_weight_net.weight, 0.)
-        nn.init.constant_(self.offset_weight_net.bias, 0.)
-
-        # Output projection back to in_channels
-        self.proj = ConvModule(
-            in_channels, in_channels, kernel_size=1,
-            conv_cfg=conv_cfg, norm_cfg=norm_cfg, act_cfg=act_cfg)
-
-    def forward(self, query, key):
-        # query: Source features [B, C, H, W]
-        # key: Target features [B, C, H, W]
-        B, C, H, W = query.shape
-
-        # 1. Predict offsets and weights
-        out = self.offset_weight_net(query) 
-        out = out.view(B, self.n_heads, self.n_points, 3, H, W)
-
-        offsets = out[:, :, :, :2, :, :] # [B, heads, points, 2, H, W]
-        weights = out[:, :, :, 2, :, :]  # [B, heads, points, H, W]
-        weights = F.softmax(weights, dim=2) # Softmax over the K points
-
-        # 2. Create normalized reference grid [-1, 1]
-        grid_y, grid_x = torch.meshgrid(
-            torch.linspace(-1, 1, H, device=query.device),
-            torch.linspace(-1, 1, W, device=query.device),
-            indexing='ij'
-        )
-        grid = torch.stack([grid_x, grid_y], dim=-1).view(1, 1, 1, H, W, 2)
-
-        # 3. Compute sampling locations
-        # Scale offsets by 0.1 to prevent chaotic jumps in early iterations
-        offsets = offsets.permute(0, 1, 2, 4, 5, 3)  # [B, heads, pts, H, W, 2]
-        sampling_locs = grid + offsets * 0.1  # [B, heads, pts, H, W, 2]
-
-        # 4. Bilinear Sampling from Target per point
-        sampled_list = []
-        key_reshaped = key.view(B, self.n_heads, self.d_head, H, W).reshape(B * self.n_heads, self.d_head, H, W)
-        for k in range(self.n_points):
-            locs_k = sampling_locs[:, :, k, :, :, :]  # [B, heads, H, W, 2]
-            locs_k = locs_k.reshape(B * self.n_heads, H, W, 2)
-            s = F.grid_sample(key_reshaped, locs_k, mode='bilinear', align_corners=True)
-            sampled_list.append(s)  # [B*heads, d_head, H, W]
-        sampled = torch.stack(sampled_list, dim=1)  # [B*heads, pts, d_head, H, W]
-        sampled = sampled.view(B, self.n_heads, self.n_points, self.d_head, H, W)
-        sampled_feat = sampled.permute(0, 1, 3, 4, 5, 2)  # [B, heads, d_head, H, W, points]
-
-        # 5. Apply attention weights and sum
-        weights = weights.permute(0, 1, 3, 4, 2).unsqueeze(2)  # [B, heads, 1, H, W, points]
-        out_feat = (sampled_feat * weights).sum(dim=-1)  # [B, heads, d_head, H, W]
-        out_feat = out_feat.reshape(B, C, H, W)
-
-        return self.proj(out_feat)
 
 
 class UdaAttentionBlock(BaseModule):
@@ -95,21 +26,26 @@ class UdaAttentionBlock(BaseModule):
         num_heads = max(1, channels // 32)
 
         # Self-Attention for Source and Target
-        self.encoder = SelfSRAttention(dim=channels, num_heads=num_heads, sr_ratio=sr_ratio, qkv_bias=True)
-        self.decoder = SelfSRAttention(dim=channels, num_heads=num_heads, sr_ratio=sr_ratio, qkv_bias=True)
+        self.encoder = SelfSRAttentionBlock(dim=channels, num_heads=num_heads, 
+                                                sr_ratio=sr_ratio, drop_path=drop_path,
+                                                qkv_bias=True)
+        self.decoder = SelfSRAttentionBlock(dim=channels, num_heads=num_heads, 
+                                                sr_ratio=sr_ratio, drop_path=drop_path,
+                                                qkv_bias=True)
         
         # Cross-Attention: Hybrid Routing
         if use_deformable:
             # Use Deformable Cross-Attention for High-Res Stages
-            self.mix_att = DeformableCrossAttnBlock(
+            self.mix_att = LinearDeformableCrossAttnBlock(
                 in_channels=channels,
                 n_heads=num_heads, # Dynamic head scaling based on channel depth
-                n_points=n_points,
-                conv_cfg=conv_cfg, norm_cfg=norm_cfg, act_cfg=act_cfg
+                n_points=n_points
             )
         else:
             # Use Standard SelfAttentionBlock for Low-Res Stages
-            self.mix_att = SelfSRAttention(dim=channels, num_heads=num_heads, sr_ratio=sr_ratio, qkv_bias=True)
+            self.mix_att = SelfSRAttentionBlock(dim=channels, num_heads=num_heads, 
+                                                sr_ratio=sr_ratio, drop_path=drop_path,
+                                                qkv_bias=True)
 
         if out_cat_and_conv:
             self.out_conv = ConvModule(channels * 2, channels, kernel_size=1, conv_cfg=conv_cfg, norm_cfg=norm_cfg, act_cfg=act_cfg)
@@ -119,6 +55,11 @@ class UdaAttentionBlock(BaseModule):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
     def forward(self, x, ema_tgt_feat=None):
+        num_images, C, H, W = x.shape
+        if ema_tgt_feat is not None:
+            # Memory Optimization: x contains ONLY source images
+            x_src = x
+            x_tgt = ema_tgt_feat
         num_images, C, H, W = x.shape
         if ema_tgt_feat is not None:
             # Memory Optimization: x contains ONLY source images
@@ -157,10 +98,10 @@ class UdaAttentionBlock(BaseModule):
         return out, dec_out
 
 @NECKS.register_module()
-class CrossDomainAttNeck(BaseModule):
+class LinearCrossDomainAttNeck(BaseModule):
     def __init__(self, in_channels, rescale=0.5, out_cat_and_conv=False, hybrid_route=True,
                  conv_cfg=None, norm_cfg=None, act_cfg=None, n_points=4, sr_ratios=(8, 4, 2, 1), **kwargs):
-        super(CrossDomainAttNeck, self).__init__()
+        super(LinearCrossDomainAttNeck, self).__init__()
 
         self.in_channels = in_channels
         self.uda_blocks = nn.ModuleList()
