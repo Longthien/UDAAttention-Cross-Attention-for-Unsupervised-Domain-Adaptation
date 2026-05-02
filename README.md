@@ -8,6 +8,8 @@
 *Unsupervised Domain Adaptation (UDA)* for semantic segmentation is often hindered by spatial misalignment between domains and the prohibitive $\mathcal{O}(N^2)$ computational cost of high-resolution cross-attention. To solve this, we propose *Target-Augmented Domain Adaptation (TADA)*, a framework that explicitly bridges the domain gap by augmenting source features with semantically aligned target context before classification.
 TADA achieves this via a Hybrid Cross-Attention Neck that dynamically processes features based on their spatial scale. It leverages highly efficient Deformable Cross-Attention at high resolutions to align local geometry and boundaries (bypassing the memory bottleneck), while utilizing standard Multi-Head Cross-Attention at low resolutions to capture global scene layout. Guided by a prototype-driven contrastive loss, TADA ensures that source queries accurately locate and extract semantically consistent target distributions, preventing feature collapse and significantly improving cross-domain generalization.
 
+To enforce semantic consistency across the domain gap, TADA utilizes a Centroid-Aware Semantic InfoNCE loss that regularizes the feature space of the Hybrid Neck. Rather than traditional pixel-to-pixel contrast, this loss optimizes alignment by mapping source features directly to Target-Domain Centroids (Prototypes).
+
 *Pushes SOTA Boundaries:* Integrating TADA into DAFormer yields a new peak performance of 69.87 mIoU, a +1.57 absolute improvement over the standard baseline.
 
 For more information on DAFormer, please check the [original repository](https://github.com/lhoyer/DAFormer).
