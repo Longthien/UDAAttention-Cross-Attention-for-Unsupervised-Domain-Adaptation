@@ -1,137 +1,52 @@
-## DAFormer: Improving Network Architectures and Training Strategies for Domain-Adaptive Semantic Segmentation
+## TADA (Target-Augmented Domain Adaptation)
 
-**by [Lukas Hoyer](https://lhoyer.github.io/), [Dengxin Dai](https://vas.mpi-inf.mpg.de/dengxin/), and [Luc Van Gool](https://scholar.google.de/citations?user=TwMib_QAAAAJ&hl=en)**
+**by [Thien Bui Long]()
 
-**[[CVPR22 Paper]](https://arxiv.org/pdf/2111.14887.pdf)**
-**[[Extension Paper]](https://arxiv.org/pdf/2304.13615.pdf)**
-
-:bell: **News:**
-
-* [2024-07-03] We are happy to announce that our work [SemiVL](https://github.com/google-research/semivl) on semi-supervised semantic segmentation with vision-language guidance was accepted at **ECCV24**.
-* [2024-07-03] We are happy to announce that our follow-up work [DGInStyle](https://dginstyle.github.io/) on image diffusion for domain-generalizable semantic segmentation was accepted at **ECCV24**.
-* [2023-09-26] We are happy to announce that our [Extension Paper](https://arxiv.org/pdf/2304.13615.pdf) on domain generalization and clear-to-adverse-weather UDA was accapted at **PAMI**. 
-* [2023-08-25] We are happy to announce that our follow-up work [EDAPS](https://github.com/susaha/edaps) on panoptic segmentation UDA was accepted at **ICCV23**.
-* [2023-04-23] We further extend DAFormer to domain generalization and clear-to-adverse-weather UDA in the [Extension Paper](https://arxiv.org/pdf/2304.13615.pdf).
-* [2023-02-28] We are happy to announce that our follow-up work [MIC](https://github.com/lhoyer/MIC) on context-enhanced UDA was accepted at **CVPR23**.
-* [2022-07-06] We are happy to announce that our follow-up work [HRDA](https://github.com/lhoyer/HRDA) on high-resolution UDA was accepted at **ECCV22**.
-* [2022-03-09] We are happy to announce that DAFormer was accepted at **CVPR22**.
 
 ## Overview
 
-As acquiring pixel-wise annotations of real-world images for semantic
-segmentation is a costly process, a model can instead be trained with more
-accessible synthetic data and adapted to real images without requiring their
-annotations. This process is studied in **Unsupervised Domain Adaptation (UDA)**.
+*Unsupervised Domain Adaptation (UDA)* for semantic segmentation is often hindered by spatial misalignment between domains and the prohibitive $\mathcal{O}(N^2)$ computational cost of high-resolution cross-attention. To solve this, we propose *Target-Augmented Domain Adaptation (TADA)*, a novel framework that explicitly bridges the domain gap by augmenting source features with semantically aligned target context before classification.TADA achieves this via a Hybrid Cross-Attention Neck that dynamically processes features based on their spatial scale. It leverages highly efficient Deformable Cross-Attention at high resolutions to align local geometry and boundaries (bypassing the memory bottleneck), while utilizing standard Multi-Head Cross-Attention at low resolutions to capture global scene layout. Guided by a prototype-driven contrastive loss, TADA ensures that source queries accurately locate and extract semantically consistent target distributions, preventing feature collapse and significantly improving cross-domain generalization.
 
-Even though a large number of methods propose new UDA strategies, they
-are mostly based on outdated network architectures. In this work, we
-particularly study the influence of the network architecture on UDA performance
-and propose **DAFormer**, a network architecture tailored for UDA. It consists of a
-Transformer encoder and a multi-level context-aware feature fusion decoder.
 
-DAFormer is enabled by three simple but crucial training strategies to stabilize the
-training and to avoid overfitting the source domain: While the
-**Rare Class Sampling** on the source domain improves the quality of pseudo-labels
-by mitigating the confirmation bias of self-training towards common classes,
-the **Thing-Class ImageNet Feature Distance** and a **Learning Rate Warmup** promote
-feature transfer from ImageNet pretraining.
-
-DAFormer significantly improves
-the state-of-the-art performance **by 10.8 mIoU for GTA→Cityscapes**
-and **by 5.4 mIoU for Synthia→Cityscapes** and enables learning even
-difficult classes such as train, bus, and truck well.
-
-![UDA over time](resources/uda_over_time.png)
-
-The strengths of DAFormer, compared to the previous state-of-the-art UDA method
-ProDA, can also be observed in qualitative examples from the Cityscapes
-validation set.
-
-![Demo](resources/demo.gif)
-![Color Palette](resources/color_palette.png)
-
-DAFormer can be further **extended to domain generalization** lifting the requirement
-of access to target images. Also in domain generalization,
-DAFormer significantly improves the state-of-the-art performance by **+6.5 mIoU**.
 
 For more information on DAFormer, please check our
-[[CVPR Paper]](https://arxiv.org/pdf/2111.14887.pdf) and the [[Extension Paper]](https://arxiv.org/pdf/2304.13615.pdf).
 
 If you find this project useful in your research, please consider citing:
 
 ```
-@InProceedings{hoyer2022daformer,
-  title={{DAFormer}: Improving Network Architectures and Training Strategies for Domain-Adaptive Semantic Segmentation},
-  author={Hoyer, Lukas and Dai, Dengxin and Van Gool, Luc},
-  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
-  pages={9924--9935},
-  year={2022}
+@InProceedings{
 }
 
-@Article{hoyer2024domain,
-  title={Domain Adaptive and Generalizable Network Architectures and Training Strategies for Semantic Image Segmentation},
-  author={Hoyer, Lukas and Dai, Dengxin and Van Gool, Luc},
-  journal={IEEE Transactions on Pattern Analysis and Machine Intelligence (PAMI)}, 
-  year={2024},
-  volume={46},
-  number={1},
-  pages={220-235},
-  doi={10.1109/TPAMI.2023.3320613}}
-}
+@Article{}
+
 ```
 
-## Comparison with State-of-the-Art UDA
+## Comparison with Baseline
 
-DAFormer significantly outperforms previous works on several UDA benchmarks.
-This includes synthetic-to-real adaptation on GTA→Cityscapes and
-Synthia→Cityscapes as well as clear-to-adverse-weather adaptation on
-Cityscapes→ACDC and Cityscapes→DarkZurich.
+| Class         | DAFormer w/o Fdist |  DAFormer | TADA + DAFormer w/o Fdist | TADA + DAFormer |
+| ------------- | -----------------: | --------: | ------------------------: | --------------: |
+| Road          |              95.88 |     95.70 |                     95.45 |       **97.04** |
+| Sidewalk      |              71.01 |     70.20 |                     67.92 |       **77.00** |
+| Building      |              89.40 |     89.40 |                 **89.62** |           89.13 |
+| Wall          |              53.10 |     53.50 |                 **55.06** |           42.90 |
+| Fence         |              45.08 | **48.10** |                     48.07 |           46.76 |
+| Pole          |              49.50 |     49.60 |                     51.82 |       **53.29** |
+| Traffic Light |              56.61 |     55.80 |                     58.38 |       **61.29** |
+| Traffic Sign  |              59.38 |     59.40 |                     63.62 |       **66.31** |
+| Vegetation    |          **90.01** |     89.90 |                 **90.04** |           89.93 |
+| Terrain       |              49.94 |     47.90 |                     49.28 |       **50.09** |
+| Sky           |              91.84 | **92.50** |                     91.93 |           92.16 |
+| Person        |              71.45 |     72.20 |                     72.94 |       **74.80** |
+| Rider         |              44.84 |     44.70 |                     45.43 |       **50.16** |
+| Car           |              92.22 |     92.30 |                 **92.92** |           91.85 |
+| Truck         |              68.85 |     74.50 |                 **77.93** |           67.71 |
+| Bus           |              73.64 |     78.20 |                     76.19 |       **79.03** |
+| Train         |              48.58 |     65.10 |                     55.29 |       **74.99** |
+| Motorcycle    |              57.14 |     55.90 |                     55.54 |       **60.34** |
+| Bicycle       |          **65.43** |     61.80 |                     63.29 |           62.65 |
+| **mIoU**      |              67.05 |     68.30 |                     68.46 |       **69.87** |
+       |
 
-|                     | GTA→CS(val)    | Synthia→CS(val)    | CS→ACDC(test)   | CS→DarkZurich(test)   |
-|---------------------|----------------|--------------------|-----------------|-----------------------|
-| ADVENT [1]          | 45.5           | 41.2               | 32.7            | 29.7                  |
-| BDL [2]             | 48.5           | --                 | 37.7            | 30.8                  |
-| FDA [3]             | 50.5           | --                 | 45.7            | --                    |
-| DACS [4]            | 52.1           | 48.3               | --              | --                    |
-| ProDA [5]           | 57.5           | 55.5               | --              | --                    |
-| MGCDA [6]           | --             | --                 | 48.7            | 42.5                  |
-| DANNet [7]          | --             | --                 | 50.0            | 45.2                  |
-| **DAFormer (Ours)** | **68.3**       | **60.9**           | **55.4***       | **53.8***             |
-
-&ast; New results of our [extension paper](https://arxiv.org/pdf/2304.13615.pdf)
-
-References:
-
-1. Vu et al. "Advent: Adversarial entropy minimization for domain adaptation in semantic segmentation" in CVPR 2019.
-2. Li et al. "Bidirectional learning for domain adaptation of semantic segmentation" in CVPR 2019.
-3. Yang et al. "Fda: Fourier domain adaptation for semantic segmentation" in CVPR 2020.
-4. Tranheden et al. "Dacs: Domain adaptation via crossdomain mixed sampling" in WACV 2021.
-5. Zhang et al. "Prototypical pseudo label denoising and target structure learning for domain adaptive semantic segmentation" in CVPR 2021.
-6. Sakaridis et al. "Map-guided curriculum domain adaptation and uncertaintyaware evaluation for semantic nighttime image segmentation" in TPAMI, 2020.
-7. Wu et al. "DANNet: A one-stage domain adaptation network for unsupervised nighttime semantic segmentation" in CVPR, 2021.
-
-## Comparison with State-of-the-Art Domain Generalization (DG)
-
-DAFormer significantly outperforms previous works on domain generalization from GTA to real street scenes.
-
-| DG Method       | Cityscapes     | BDD100K        | Mapillary        | Avg.           |
-|-----------------|----------------|----------------|------------------|----------------|
-| IBN-Net [1,5]   | 37.37          | 34.21          | 36.81            | 36.13          |
-| DRPC [2]        | 42.53          | 38.72          | 38.05            | 39.77          |
-| ISW [3,5]       | 37.20          | 33.36          | 35.57            | 35.38          |
-| SAN-SAW [4]     | 45.33          | 41.18          | 40.77            | 42.43          |
-| SHADE [5]       | 46.66          | 43.66          | 45.50            | 45.27          |
-| DAFormer (Ours) | 52.65&ast;     | 47.89&ast;     | 54.66&ast;       | 51.73&ast;     |
-
-&ast; New results of our [extension paper](https://arxiv.org/pdf/2304.13615.pdf)
-
-References:
-
-1. Pan et al. "Two at once: Enhancing learning and generalization capacities via IBN-Net" in ECCV, 2018.
-2. Yue et al. "Domain randomization and pyramid consistency: Simulation-to-real generalization without accessing target domain data" ICCV, 2019.
-3. Choi et al. "RobustNet: Improving Domain Generalization in Urban-Scene Segmentation via Instance Selective Whitening" in CVPR, 2021.
-4. Peng et al. "Semantic-aware domain generalized segmentation" in CVPR, 2022.
-5. Zhao et al. "Style-Hallucinated Dual Consistency Learning for Domain Generalized Semantic Segmentation" in ECCV, 2022.
 
 ## Setup Environment
 
@@ -154,18 +69,6 @@ Please, download the MiT ImageNet weights (b3-b5) provided by [SegFormer](https:
 from their [OneDrive](https://connecthkuhk-my.sharepoint.com/:f:/g/personal/xieenze_connect_hku_hk/EvOn3l1WyM5JpnMQFSEO5b8B7vrHw9kDaJGII-3N9KNhrg?e=cpydzZ) and put them in the folder `pretrained/`.
 Further, download the checkpoint of [DAFormer on GTA→Cityscapes](https://drive.google.com/file/d/1pG3kDClZDGwp1vSTEXmTchkGHmnLQNdP/view?usp=sharing) and extract it to the folder `work_dirs/`.
 
-All experiments were executed on an NVIDIA RTX 2080 Ti.
-
-## Inference Demo
-
-Already as this point, the provided DAFormer model can be applied to a demo image:
-
-```shell
-python -m demo.image_demo demo/demo.png work_dirs/211108_1622_gta2cs_daformer_s0_7f24c/211108_1622_gta2cs_daformer_s0_7f24c.json work_dirs/211108_1622_gta2cs_daformer_s0_7f24c/latest.pth
-```
-
-When judging the predictions, please keep in mind that DAFormer had no access
-to real-world labels during the training.
 
 ## Setup Datasets
 
@@ -244,93 +147,16 @@ python tools/convert_datasets/synthia.py data/synthia/ --nproc 8
 
 ## Training
 
-For convenience, we provide an [annotated config file](configs/daformer/gta2cs_uda_warm_fdthings_rcs_croppl_a999_daformer_mitb5_s0.py) of the final DAFormer.
+
 A training job can be launched using:
 
 ```shell
-python run_experiments.py --config configs/daformer/gta2cs_uda_warm_fdthings_rcs_croppl_a999_daformer_mitb5_s0.py
+python run_experiments.py --config configs/daformer/.py
 ```
 
 For the experiments in our paper (e.g. network architecture comparison,
 component ablations, ...), we use a system to automatically generate
 and train the configs:
-
-```shell
-python run_experiments.py --exp <ID>
-```
-
-More information about the available experiments and their assigned IDs, can be
-found in [experiments.py](experiments.py). The generated configs will be stored
-in `configs/generated/`.
-
-## Testing & Predictions
-
-The provided DAFormer checkpoint trained on GTA→Cityscapes
-(already downloaded by `tools/download_checkpoints.sh`) can be tested on the
-Cityscapes validation set using:
-
-```shell
-sh test.sh work_dirs/211108_1622_gta2cs_daformer_s0_7f24c
-```
-
-The predictions are saved for inspection to
-`work_dirs/211108_1622_gta2cs_daformer_s0_7f24c/preds`
-and the mIoU of the model is printed to the console. The provided checkpoint
-should achieve 68.85 mIoU. Refer to the end of
-`work_dirs/211108_1622_gta2cs_daformer_s0_7f24c/20211108_164105.log` for
-more information such as the class-wise IoU.
-
-Similarly, also other models can be tested after the training has finished:
-
-```shell
-sh test.sh path/to/checkpoint_directory
-```
-
-When evaluating a model trained on Synthia→Cityscapes, please note that the
-evaluation script calculates the mIoU for all 19 Cityscapes classes. However,
-Synthia contains only labels for 16 of these classes. Therefore, it is a common
-practice in UDA to report the mIoU for Synthia→Cityscapes only on these 16
-classes. As the Iou for the 3 missing classes is 0, you can do the conversion
-mIoU16 = mIoU19 * 19 / 16.
-
-The results for Cityscapes→ACDC and Cityscapes→DarkZurich are reported on
-the test split of the target dataset. To generate the predictions for the test
-set, please run:
-
-```shell
-python -m tools.test path/to/config_file path/to/checkpoint_file --test-set --format-only --eval-option imgfile_prefix=labelTrainIds to_label_id=False
-```
-
-The predictions can be submitted to the public evaluation server of the
-respective dataset to obtain the test score.
-
-## Domain Generalization
-
-For the domain generalization extension of DAFormer, please refer to
-the DG branch of the HRDA repository: [https://github.com/lhoyer/HRDA/tree/dg](https://github.com/lhoyer/HRDA/tree/dg)
-
-## Checkpoints
-
-Below, we provide checkpoints of DAFormer for different benchmarks.
-As the results in the paper are provided as the mean over three random
-seeds, we provide the checkpoint with the median validation performance here.
-
-* [DAFormer for GTA→Cityscapes](https://drive.google.com/file/d/1pG3kDClZDGwp1vSTEXmTchkGHmnLQNdP/view?usp=sharing)
-* [DAFormer for Synthia→Cityscapes](https://drive.google.com/file/d/1V9EpoTePjGq33B8MfombxEEcq9a2rBEt/view?usp=sharing)
-* [DAFormer for Cityscapes→ACDC](https://drive.google.com/file/d/16RSBkzJbGprWr04LjyNleqRzRZgCaEBn/view?usp=sharing)
-* [DAFormer for Cityscapes→DarkZurich](https://drive.google.com/file/d/1_VXKDhnp4x4sslBj5B8tqqBJXeOuI9hS/view?usp=sharing)
-* [DAFormer for GTA Domain Generalization](https://drive.google.com/file/d/1up9x3R3HtU_MjM6F89xNIHzPbIqBSacx/view?usp=sharing)
-
-The checkpoints come with the training logs. Please note that:
-
-* The logs provide the mIoU for 19 classes. For Synthia→Cityscapes, it is
-  necessary to convert the mIoU to the 16 valid classes. Please, read the
-  section above for converting the mIoU.
-* The logs provide the mIoU on the validation set. For Cityscapes→ACDC and
-  Cityscapes→DarkZurich the results reported in the paper are calculated on the
-  test split. For DarkZurich, the performance significantly differs between
-  validation and test split. Please, read the section above on how to obtain
-  the test mIoU.
 
 ## Framework Structure
 

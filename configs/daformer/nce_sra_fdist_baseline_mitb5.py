@@ -44,7 +44,7 @@ uda = dict(
     nce_active_classes = [0, 1, 2, 3, 8, 9, 10, 13], # only majority classes
 )
 data = dict(
-    samples_per_gpu=4,
+    samples_per_gpu=2,
     workers_per_gpu=4,
     train=dict(
         # Rare Class Sampling
@@ -67,7 +67,7 @@ checkpoint_config = dict(by_epoch=False, interval=40000, max_keep_ckpts=1)
 evaluation = dict(interval=2000, metric='mIoU', save_best='mIoU')
 # Meta Information for Result Analysis
 name = 'nce0.1_majorclass_sra_fdist_baseline_mitb5_40k'
-exp = 'full_setting'
+exp = 'test'
 name_dataset = 'gta2cityscapes'
 name_architecture = 'daformer_sepaspp_mitb5_crossattn'
 name_encoder = 'mitb5'
