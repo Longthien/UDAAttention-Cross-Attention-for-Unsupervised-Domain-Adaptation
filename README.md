@@ -1,4 +1,4 @@
-## TADA (Target-Augmented Domain Adaptation)
+## TADA: Target-Augmented Domain Adaptation
 
 **by Thien Bui Long**
 
