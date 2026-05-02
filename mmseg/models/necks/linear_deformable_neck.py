@@ -91,9 +91,9 @@ class UdaAttentionBlock(BaseModule):
             out = enc_out + self.drop_path(cross_out)
             out = self.out_norm(out)
 
-        if self.training and random.random() < 0.005:
-            print_log(f"Encode(abs): {torch.abs(enc_out).mean():.4f}, Decode(abs): {torch.abs(dec_out).mean():.4f}, Cross(abs): {torch.abs(cross_out).mean():.4f}, Out(abs): {torch.abs(out).mean():.4f}", 'mmseg')
-            print_log(f"Feat shape: {out.shape}", 'mmseg')
+        # if self.training and random.random() < 0.005:
+        #     print_log(f"Encode(abs): {torch.abs(enc_out).mean():.4f}, Decode(abs): {torch.abs(dec_out).mean():.4f}, Cross(abs): {torch.abs(cross_out).mean():.4f}, Out(abs): {torch.abs(out).mean():.4f}", 'mmseg')
+        #     print_log(f"Feat shape: {out.shape}", 'mmseg')
 
         return out, dec_out
 

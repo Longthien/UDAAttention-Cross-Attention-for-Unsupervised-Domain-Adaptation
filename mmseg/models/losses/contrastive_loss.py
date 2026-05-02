@@ -1,3 +1,7 @@
+from ast import List
+
+from pyparsing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -143,3 +147,118 @@ class CentroidAwareInfoNCELoss(nn.Module):
         
         loss = F.cross_entropy(sim, labels)
         return self.loss_weight * loss
+
+class CentroidSemanticInfoNCELoss(nn.Module):
+    """
+    Refined Centroid-based InfoNCE for UDA.
+    Optimized for Satellite Imagery (OpenEarthMap/LoveDA).
+    """
+
+    def __init__(
+        self,
+        temperature = 0.07,
+        ignore_index = 255,
+        loss_weight = 1.0,
+        max_samples = 4096,
+        active_classes = None, 
+        conf_threshold = 0.9,
+    ):
+        super().__init__()
+        self.temperature = temperature
+        self.ignore_index = ignore_index
+        self.loss_weight = loss_weight
+        self.max_samples = max_samples
+        self.conf_threshold = conf_threshold
+
+        if active_classes is not None:
+            self.register_buffer(
+                "active_classes_mask",
+                torch.tensor(active_classes, dtype=torch.long),
+            )
+        else:
+            self.active_classes_mask = None
+
+    def _compute_centroids(self, f_t_flat, pseudo_flat, conf_flat):
+        """Computes centroids only for high-confidence target pixels."""
+        # Find classes present in target with sufficient confidence
+        if conf_flat is not None and self.conf_threshold > 0.0:
+            mask_conf = conf_flat >= self.conf_threshold
+            valid_pseudo = pseudo_flat[mask_conf]
+        else:
+            valid_pseudo = pseudo_flat
+
+        unique_t_classes = torch.unique(valid_pseudo)
+        unique_t_classes = unique_t_classes[unique_t_classes != self.ignore_index]
+
+        # Intersect with active_classes if specified
+        if self.active_classes_mask is not None:
+            unique_t_classes = unique_t_classes[torch.isin(unique_t_classes, self.active_classes_mask)]
+
+        if unique_t_classes.numel() == 0:
+            return None, None
+
+        centroids = []
+        centroid_classes = []
+
+        for cls in unique_t_classes:
+            mask = (pseudo_flat == cls)
+            if conf_flat is not None:
+                mask = mask & (conf_flat >= self.conf_threshold)
+            
+            if mask.any():
+                # Weighted average or simple mean
+                cls_feat = f_t_flat[mask].mean(dim=0)
+                centroids.append(F.normalize(cls_feat, dim=0))
+                centroid_classes.append(cls)
+
+        return torch.stack(centroids), torch.stack(centroid_classes)
+
+    def forward(self, f_src, f_tgt, source_gt, target_pseudo, target_conf=None):
+        B, C, H, W = f_src.shape
+        device = f_src.device
+
+        # 1. Standardize and Downsample
+        def process_label(t, is_conf=False):
+            if t.dim() == 4: t = t.squeeze(1)
+            mode = "bilinear" if is_conf else "nearest"
+            out = F.interpolate(t.unsqueeze(1).float(), (H, W), mode=mode).squeeze(1)
+            return out if is_conf else out.long()
+
+        source_gt = process_label(source_gt)
+        target_pseudo = process_label(target_pseudo)
+        target_conf = process_label(target_conf, is_conf=True) if target_conf is not None else None
+
+        # 2. Normalize and Flatten
+        f_src = F.normalize(f_src, dim=1).view(B, C, -1).permute(0, 2, 1).reshape(-1, C)
+        f_tgt = F.normalize(f_tgt, dim=1).view(B, C, -1).permute(0, 2, 1).reshape(-1, C)
+        gt_flat = source_gt.view(-1)
+        ps_flat = target_pseudo.view(-1)
+        conf_flat = target_conf.view(-1) if target_conf is not None else None
+
+        # 3. Get Centroids
+        centroids, centroid_classes = self._compute_centroids(f_tgt, ps_flat, conf_flat)
+        if centroids is None:
+            return torch.tensor(0.0, device=device, requires_grad=True)
+
+        # 4. Filter Source Pixels
+        # Only use source pixels that have a corresponding centroid in the target
+        valid_mask = torch.isin(gt_flat, centroid_classes) & (gt_flat != self.ignore_index)
+        src_feats = f_src[valid_mask]
+        src_labels = gt_flat[valid_mask]
+
+        if src_feats.shape[0] == 0:
+            return torch.tensor(0.0, device=device, requires_grad=True)
+
+        # 5. Subsample
+        if src_feats.shape[0] > self.max_samples:
+            idx = torch.randperm(src_feats.shape[0], device=device)[:self.max_samples]
+            src_feats, src_labels = src_feats[idx], src_labels[idx]
+
+        # 6. Similarity and Loss
+        logits = torch.matmul(src_feats, centroids.T) / self.temperature
+        
+        # Map class IDs to the local indices of the centroids tensor
+        # This is the safest way to get the labels for CrossEntropy
+        labels = torch.stack([torch.where(centroid_classes == l)[0][0] for l in src_labels])
+
+        return F.cross_entropy(logits, labels) * self.loss_weight

@@ -1,8 +1,3 @@
-# ---------------------------------------------------------------
-# Copyright (c) 2021-2022 ETH Zurich, Lukas Hoyer. All rights reserved.
-# Licensed under the Apache License, Version 2.0
-# ---------------------------------------------------------------
-
 _base_ = [
     '../_base_/default_runtime.py',
     # DAFormer Network Architecture
@@ -10,7 +5,7 @@ _base_ = [
     # GTA->Cityscapes Data Loading
     '../_base_/datasets/uda_gta_to_cityscapes_512x512.py',
     # Basic UDA Self-Training
-    '../_base_/uda/udaneck_dacs.py',
+    '../_base_/uda/pefat.py',
     # AdamW Optimizer
     '../_base_/schedules/adamw.py',
     # Linear Learning Rate Warmup with Subsequent Linear Decay
@@ -18,29 +13,16 @@ _base_ = [
 ]
 # Random Seed
 seed = 0
-
-model = dict(
-    neck=dict(
-        type='LinearCrossDomainAttNeck',
-        rescale=0.5,
-        out_cat_and_conv=False,
-        hybrid_route=False,
-        n_points=12,
-        sr_ratios=(8, 4, 2, 1),
-        in_channels=[64, 128, 320, 512],
-        conv_cfg=None,
-        norm_cfg=dict(type='BN', requires_grad=True),
-        act_cfg=dict(type='GELU')),
-)
 # Modifications to Basic UDA
 uda = dict(
-    nce_loss_weight=0.0,
-    nce_loss_temp = 0.0,
-    print_grad_magnitude=True,
+    type='PEFAT',
+    max_iters=40000,
+    warmup_iters=10000,
+    pefat_k_steps=1,
+    alpha=0.999
 )
 data = dict(
-    samples_per_gpu=4,
-    workers_per_gpu=4,
+    samples_per_gpu=1,    
     train=dict(
         # Rare Class Sampling
         rare_class_sampling=dict(
@@ -52,20 +34,19 @@ optimizer = dict(
     paramwise_cfg=dict(
         custom_keys=dict(
             head=dict(lr_mult=10.0),
-            neck=dict(lr_mult=10.0),
             pos_block=dict(decay_mult=0.0),
             norm=dict(decay_mult=0.0))))
 n_gpus = 1
 runner = dict(type='IterBasedRunner', max_iters=40000)
 # Logging Configuration
 checkpoint_config = dict(by_epoch=False, interval=40000, max_keep_ckpts=1)
-evaluation = dict(interval=2000, metric='mIoU', save_best='mIoU')
+evaluation = dict(interval=2000, metric='mIoU')
 # Meta Information for Result Analysis
-name = 'sra_deformable_crossattn_mitb5'
-exp = 'baseline'
+name = 'gta2cs_uda_pefat_mitb5_s0'
+exp = 'pefat'
 name_dataset = 'gta2cityscapes'
-name_architecture = 'daformer_sepaspp_mitb5_crossattn'
+name_architecture = 'daformer_sepaspp_mitb5'
 name_encoder = 'mitb5'
 name_decoder = 'daformer_sepaspp'
-name_uda = 'dacs_a999_rcs0.01_cpl_crossattn'
+name_uda = 'pefat_a999_k1_warm10k'
 name_opt = 'adamw_6e-05_pmTrue_poly10warm_1x2_40k'

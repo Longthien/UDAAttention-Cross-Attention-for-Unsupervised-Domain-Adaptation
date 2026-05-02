@@ -5,5 +5,7 @@
 
 from mmseg.models.uda.dacs import DACS
 from mmseg.models.uda.udaneck_dacs import UDANeck_DACS
-from mmseg.models.uda.partially_frooze_ema_dacs import PartiallyFroozeEmaDacs
-__all__ = ['DACS', 'UDANeck_DACS', 'PartiallyFroozeEmaDacs']
+# from mmseg.models.uda.partially_frooze_ema_dacs import PartiallyFroozeEmaDacs
+from mmseg.models.uda.nce_dacs import NCE_DACS
+from mmseg.models.uda.pefat import PEFAT
+__all__ = ['DACS', 'UDANeck_DACS', 'NCE_DACS', 'PEFAT']

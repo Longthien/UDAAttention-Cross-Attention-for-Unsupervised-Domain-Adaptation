@@ -27,7 +27,7 @@ from mmseg.models.utils.dacs_transforms import (denorm, get_class_masks,
                                                 get_mean_std, strong_transform)
 from mmseg.models.utils.visualization import subplotimg
 from mmseg.utils.utils import downscale_label_ratio
-from mmseg.models.losses.contrastive_loss import CentroidAwareInfoNCELoss, SpatialInfoNCELoss
+from mmseg.models.losses.contrastive_loss import CentroidSemanticInfoNCELoss
 from mmseg.ops import resize
 
 def _params_equal(ema_model, model):
@@ -51,10 +51,10 @@ def calc_grad_magnitude(grads, norm_type=2.0):
 
 
 @UDA.register_module()
-class UDANeck_DACS(UDADecorator):
+class NCE_DACS(UDADecorator):
 
     def __init__(self, **cfg):
-        super(UDANeck_DACS, self).__init__(**cfg)
+        super(NCE_DACS, self).__init__(**cfg)
         self.local_iter = 0
         self.max_iters = cfg['max_iters']
         self.alpha = cfg['alpha']
@@ -73,6 +73,7 @@ class UDANeck_DACS(UDADecorator):
         self.print_grad_magnitude = cfg['print_grad_magnitude']
         self.nce_loss_weight = cfg['nce_loss_weight']
         self.nce_loss_temp = cfg['nce_loss_temp']
+        self.nce_active_classes = cfg.get('nce_active_classes', None)
         assert self.mix == 'class'
 
         self.debug_fdist_mask = None
@@ -83,12 +84,17 @@ class UDANeck_DACS(UDADecorator):
         self.ema_model = build_segmentor(ema_cfg)
 
         if self.enable_fdist:
-            self.imnet_model = build_segmentor(deepcopy(cfg['model']))
+            imnet_cfg = deepcopy(cfg['model'])
+            imnet_cfg.pop('neck')
+            self.imnet_model = build_segmentor(imnet_cfg)
         else:
             self.imnet_model = None
         self.enable_nce_loss = self.nce_loss_weight > 0
         if self.enable_nce_loss:
-            self.centroid_nce_loss = CentroidAwareInfoNCELoss(loss_weight=self.nce_loss_weight, temperature=self.nce_loss_temp)
+            self.centroid_nce_loss = CentroidSemanticInfoNCELoss(loss_weight=self.nce_loss_weight, 
+                                                                 temperature=self.nce_loss_temp, 
+                                                                 active_classes=self.nce_active_classes,
+                                                                 conf_threshold=self.pseudo_threshold)
 
     def forward_train(self, img, img_metas, gt_semantic_seg, target_img,
                       target_img_metas):
@@ -162,9 +168,23 @@ class UDANeck_DACS(UDADecorator):
             if len(src_feat) > 0 and len(target_features) > 0:
                 f_aug = src_feat[-1]
                 f_t = target_features[-1]
-                loss_centroid_nce = self.centroid_nce_loss(f_aug, f_t, gt_semantic_seg, pseudo_label[:batch_size])
+                loss_centroid_nce = self.centroid_nce_loss(f_aug, f_t, gt_semantic_seg, pseudo_label)
                 clean_losses['loss_nce'] = loss_centroid_nce
 
+        # ImageNet feature distance
+        if self.enable_fdist:
+            feat_loss, feat_log = self.calc_feat_dist(img, gt_semantic_seg,
+                                                      src_feat)
+            # feat_loss.backward()
+            clean_losses['loss_fdist'] = feat_loss
+            # if self.print_grad_magnitude:
+            #     params = self.get_model().backbone.parameters()
+            #     fd_grads = [
+            #         p.grad.detach() for p in params if p.grad is not None
+            #     ]
+            #     fd_grads = [g2 - g1 for g1, g2 in zip(seg_grads, fd_grads)]
+            #     grad_mag = calc_grad_magnitude(fd_grads)
+            #     mmcv.print_log(f'Fdist Grad.: {grad_mag}', 'mmseg')
         clean_loss, clean_log_vars = self._parse_losses(clean_losses)
         log_vars.update(clean_log_vars)
         clean_loss.backward()
@@ -176,22 +196,6 @@ class UDANeck_DACS(UDADecorator):
             grad_mag = calc_grad_magnitude(seg_grads)
             # mmcv.print_log(f'Seg. Grad.: {grad_mag}', 'mmseg')
             log_vars['grad_mag'] = grad_mag.item()
-
-
-        # ImageNet feature distance
-        if self.enable_fdist:
-            feat_loss, feat_log = self.calc_feat_dist(img, gt_semantic_seg,
-                                                      src_feat)
-            feat_loss.backward()
-            log_vars.update(add_prefix(feat_log, 'src'))
-            if self.print_grad_magnitude:
-                params = self.get_model().backbone.parameters()
-                fd_grads = [
-                    p.grad.detach() for p in params if p.grad is not None
-                ]
-                fd_grads = [g2 - g1 for g1, g2 in zip(seg_grads, fd_grads)]
-                grad_mag = calc_grad_magnitude(fd_grads)
-                mmcv.print_log(f'Fdist Grad.: {grad_mag}', 'mmseg')
 
         # Apply mixing
         mixed_img, mixed_lbl = [None] * batch_size, [None] * batch_size
@@ -221,11 +225,12 @@ class UDANeck_DACS(UDADecorator):
             mixed_img, img_metas, mixed_lbl, pseudo_weight, return_feat=True)
         mix_feat = mix_losses.pop('features')
         if self.enable_nce_loss:
+            # Calculate Centroid-Aware InfoNCE Loss for mix -> target
             if len(mix_feat) > 0 and len(target_features) > 0:
                 f_aug = mix_feat[-1]
                 f_t = target_features[-1]
                 loss_centroid_nce = self.centroid_nce_loss(f_aug, f_t, mixed_lbl[:batch_size], pseudo_label[:batch_size])
-                mix_losses['loss_centroid_nce'] = loss_centroid_nce
+                mix_losses['loss_nce'] = loss_centroid_nce
 
         mix_losses = add_prefix(mix_losses, 'mix')
         mix_loss, mix_log_vars = self._parse_losses(mix_losses)
