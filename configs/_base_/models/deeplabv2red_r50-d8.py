@@ -1,7 +1,4 @@
-# ---------------------------------------------------------------
-# Copyright (c) 2021-2022 ETH Zurich, Lukas Hoyer. All rights reserved.
-# Licensed under the Apache License, Version 2.0
-# ---------------------------------------------------------------
+# Obtained from https://github.com/lhoyer/DAFormer.git
 
 _base_ = ['deeplabv2_r50-d8.py']
 # Previous UDA methods only use the dilation rates 6 and 12 for DeepLabV2.

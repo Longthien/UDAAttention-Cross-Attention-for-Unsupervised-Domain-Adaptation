@@ -1,15 +1,16 @@
 ## TADA (Target-Augmented Domain Adaptation)
 
-**by [Thien Bui Long]()
+**by Thien Bui Long**
 
 
 ## Overview
 
-*Unsupervised Domain Adaptation (UDA)* for semantic segmentation is often hindered by spatial misalignment between domains and the prohibitive $\mathcal{O}(N^2)$ computational cost of high-resolution cross-attention. To solve this, we propose *Target-Augmented Domain Adaptation (TADA)*, a novel framework that explicitly bridges the domain gap by augmenting source features with semantically aligned target context before classification.TADA achieves this via a Hybrid Cross-Attention Neck that dynamically processes features based on their spatial scale. It leverages highly efficient Deformable Cross-Attention at high resolutions to align local geometry and boundaries (bypassing the memory bottleneck), while utilizing standard Multi-Head Cross-Attention at low resolutions to capture global scene layout. Guided by a prototype-driven contrastive loss, TADA ensures that source queries accurately locate and extract semantically consistent target distributions, preventing feature collapse and significantly improving cross-domain generalization.
+*Unsupervised Domain Adaptation (UDA)* for semantic segmentation is often hindered by spatial misalignment between domains and the prohibitive $\mathcal{O}(N^2)$ computational cost of high-resolution cross-attention. To solve this, we propose *Target-Augmented Domain Adaptation (TADA)*, a framework that explicitly bridges the domain gap by augmenting source features with semantically aligned target context before classification.
+TADA achieves this via a Hybrid Cross-Attention Neck that dynamically processes features based on their spatial scale. It leverages highly efficient Deformable Cross-Attention at high resolutions to align local geometry and boundaries (bypassing the memory bottleneck), while utilizing standard Multi-Head Cross-Attention at low resolutions to capture global scene layout. Guided by a prototype-driven contrastive loss, TADA ensures that source queries accurately locate and extract semantically consistent target distributions, preventing feature collapse and significantly improving cross-domain generalization.
 
+*Pushes SOTA Boundaries:* Integrating TADA into DAFormer yields a new peak performance of 69.87 mIoU, a +1.57 absolute improvement over the standard baseline.
 
-
-For more information on DAFormer, please check our
+For more information on DAFormer, please check the [original repository](https://github.com/lhoyer/DAFormer).
 
 If you find this project useful in your research, please consider citing:
 
@@ -45,8 +46,6 @@ If you find this project useful in your research, please consider citing:
 | Motorcycle    |              57.14 |     55.90 |                     55.54 |       **60.34** |
 | Bicycle       |          **65.43** |     61.80 |                     63.29 |           62.65 |
 | **mIoU**      |              67.05 |     68.30 |                     68.46 |       **69.87** |
-       |
-
 
 ## Setup Environment
 
@@ -158,26 +157,6 @@ For the experiments in our paper (e.g. network architecture comparison,
 component ablations, ...), we use a system to automatically generate
 and train the configs:
 
-## Framework Structure
-
-This project is based on [mmsegmentation version 0.16.0](https://github.com/open-mmlab/mmsegmentation/tree/v0.16.0).
-For more information about the framework structure and the config system,
-please refer to the [mmsegmentation documentation](https://mmsegmentation.readthedocs.io/en/latest/index.html)
-and the [mmcv documentation](https://mmcv.readthedocs.ihttps://arxiv.org/abs/2007.08702o/en/v1.3.7/index.html).
-
-The most relevant files for DAFormer are:
-
-* [configs/daformer/gta2cs_uda_warm_fdthings_rcs_croppl_a999_daformer_mitb5_s0.py](configs/daformer/gta2cs_uda_warm_fdthings_rcs_croppl_a999_daformer_mitb5_s0.py):
-  Annotated config file for the final DAFormer.
-* [mmseg/models/uda/dacs.py](mmseg/models/uda/dacs.py):
-  Implementation of UDA self-training with ImageNet Feature Distance.
-* [mmseg/datasets/uda_dataset.py](mmseg/datasets/uda_dataset.py):
-  Data loader for UDA with Rare Class Sampling.
-* [mmseg/models/decode_heads/daformer_head.py](mmseg/models/decode_heads/daformer_head.py):
-  Implementation of DAFormer decoder with context-aware feature fusion.
-* [mmseg/models/backbones/mix_transformer.py](mmseg/models/backbones/mix_transformer.py):
-  Implementation of Mix Transformer encoder (MiT).
-
 ## Acknowledgements
 
 This project is based on the following open-source projects. We thank their
@@ -186,10 +165,11 @@ authors for making the source code publically available.
 * [MMSegmentation](https://github.com/open-mmlab/mmsegmentation)
 * [SegFormer](https://github.com/NVlabs/SegFormer)
 * [DACS](https://github.com/vikolss/DACS)
+* [DAFormer](https://github.com/lhoyer/DAFormer.git)
 
 ## License
 
-This project is released under the [Apache License 2.0](LICENSE), while some 
+<!-- This project is released under the [Apache License 2.0](LICENSE), while some 
 specific features in this repository are with other licenses. Please refer to 
 [LICENSES.md](LICENSES.md) for the careful check, if you are using our code for 
-commercial matters.
+commercial matters. -->
