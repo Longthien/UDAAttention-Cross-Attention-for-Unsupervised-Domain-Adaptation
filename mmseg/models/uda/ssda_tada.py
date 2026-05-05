@@ -46,10 +46,10 @@ def calc_grad_magnitude(grads, norm_type=2.0):
 
 
 @UDA.register_module()
-class NCE_DACS(UDADecorator):
+class SSDA_TADA(UDADecorator):
 
     def __init__(self, **cfg):
-        super(NCE_DACS, self).__init__(**cfg)
+        super(SSDA_TADA, self).__init__(**cfg)
         self.local_iter = 0
         self.max_iters = cfg['max_iters']
         self.alpha = cfg['alpha']
@@ -91,8 +91,10 @@ class NCE_DACS(UDADecorator):
                                                                  active_classes=self.nce_active_classes,
                                                                  conf_threshold=self.pseudo_threshold)
 
-    def forward_train(self, img, img_metas, gt_semantic_seg, target_img,
-                      target_img_metas):
+    def forward_train(self,
+                      img, img_metas, gt_semantic_seg,
+                      target_unlabeled_img, target_unlabeled_img_metas,
+                      target_labeled_img, target_labeled_gt_semantic_seg, target_labeled_img_metas, **kwargs):
         """Forward function for training.
 
         Args:
@@ -141,17 +143,30 @@ class NCE_DACS(UDADecorator):
                 m.training = False
                 
         strong_parameters['mix'] = None
-        aug_target_img, _ = strong_transform(
+        aug_target_unlabeled_img, _ = strong_transform(
                 strong_parameters,
-                data=target_img.clone(),
+                data=target_unlabeled_img.clone(),
                 )
-        ema_target_img = torch.cat([target_img, aug_target_img], dim=0)
+        ema_target_unlabeled_img = torch.cat([target_unlabeled_img, aug_target_unlabeled_img], dim=0)
         ema_features, target_features, pseudo_label, pseudo_weight, gt_pixel_weight, pseudo_weight_log = \
-            self.generate_pseudo_label(ema_target_img, target_img_metas)
+            self.generate_pseudo_label(ema_target_unlabeled_img, target_unlabeled_img_metas)
 
         # Inject EMA target features into the student's neck
         if hasattr(self.get_model(), 'neck'):
-            self.get_model().neck.ema_target_features = [f[:batch_size].detach() for f in ema_features]
+            self.get_model().neck.ema_target_features = [f[:batch_size].detach() for f in target_features]
+        
+        # Train on labeled target images if provided (SSDA setting)
+        target_losses = self.get_model().forward_train(
+            target_labeled_img, target_labeled_img_metas, target_labeled_gt_semantic_seg, return_feat=True)
+        target_losses.pop('features')
+        target_losses = add_prefix(target_losses, 'tgt')
+        target_loss, target_log_vars = self._parse_losses(target_losses)
+        log_vars.update(target_log_vars)
+        target_loss.backward()
+
+        # Inject EMA target features into the student's neck
+        if hasattr(self.get_model(), 'neck'):
+            self.get_model().neck.ema_target_features = [f[:batch_size].detach() for f in target_features]
         
         # Train on source images
         clean_losses = self.get_model().forward_train(
@@ -200,7 +215,7 @@ class NCE_DACS(UDADecorator):
             strong_parameters['mix'] = mix_masks[i]
             mixed_img[i], mixed_lbl[i] = strong_transform(
                 strong_parameters,
-                data=torch.stack((img[i], target_img[i])),
+                data=torch.stack((img[i], target_unlabeled_img[i])),
                 target=torch.stack((gt_semantic_seg[i][0], pseudo_label[i])))
             _, pseudo_weight[i] = strong_transform(
                 strong_parameters,
@@ -213,7 +228,7 @@ class NCE_DACS(UDADecorator):
         # Inject EMA target features into the student's neck
         if hasattr(self.get_model(), 'neck'):
             # Only pass the unaugmented target features to the neck
-            self.get_model().neck.ema_target_features = [f[:batch_size].detach() for f in ema_features]
+            self.get_model().neck.ema_target_features = [f[:batch_size].detach() for f in target_features]
         
         # Train on mixed images
         mix_losses = self.get_model().forward_train(
@@ -232,7 +247,7 @@ class NCE_DACS(UDADecorator):
         log_vars.update(mix_log_vars)
         mix_loss.backward()
 
-        self.debug_visualize(img, target_img, mixed_img, gt_semantic_seg, pseudo_label, mix_masks, mixed_lbl, pseudo_weight, pseudo_weight_log, means, stds, batch_size)
+        self.debug_visualize(img, target_unlabeled_img, mixed_img, gt_semantic_seg, pseudo_label, mix_masks, mixed_lbl, pseudo_weight, pseudo_weight_log, means, stds, batch_size)
         self.local_iter += 1
 
         # Clean up to avoid holding memory across iterations

@@ -10,7 +10,9 @@ from .dataset_wrappers import ConcatDataset, RepeatDataset
 from .gta import GTADataset
 from .synthia import SynthiaDataset
 from .uda_dataset import UDADataset
-
+from .OpenEarthMap import OpenEarthMapDataset
+from .SyntheWorld import SyntheWorldDataset
+from .ssda_dataset import SSDADataset
 __all__ = [
     'CustomDataset',
     'build_dataloader',
@@ -25,4 +27,7 @@ __all__ = [
     'UDADataset',
     'ACDCDataset',
     'DarkZurichDataset',
+    'OpenEarthMapDataset',
+    'SyntheWorldDataset',
+    'SSDADataset'
 ]

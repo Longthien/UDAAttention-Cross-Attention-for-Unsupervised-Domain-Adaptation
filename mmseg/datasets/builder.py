@@ -67,11 +67,27 @@ def build_dataset(cfg, default_args=None):
     """Build datasets."""
     from .dataset_wrappers import ConcatDataset, RepeatDataset
     from mmseg.datasets import UDADataset
-    if cfg['type'] == 'UDADataset':
+    from mmseg.datasets import SSDADataset
+
+    if isinstance(cfg, (list, tuple)):
+
+        # print(cfg)
+        if len(cfg)==1:
+            dataset= build_dataset(cfg[0], default_args)
+        else:
+            dataset = ConcatDataset([build_dataset(c, default_args) for c in cfg])
+    elif cfg['type'] == 'UDADataset':
         dataset = UDADataset(
             source=build_dataset(cfg['source'], default_args),
             target=build_dataset(cfg['target'], default_args),
             cfg=cfg)
+    elif cfg['type'] == 'SSDADataset':
+        dataset = SSDADataset(
+            source=build_dataset(cfg['source'], default_args),
+            target_unlabeled=build_dataset(cfg['target_unlabeled'], default_args),
+            target_labeled=build_dataset(cfg['target_labeled'], default_args),
+            cfg=cfg
+        )
     elif isinstance(cfg, (list, tuple)):
         dataset = ConcatDataset([build_dataset(c, default_args) for c in cfg])
     elif cfg['type'] == 'RepeatDataset':
