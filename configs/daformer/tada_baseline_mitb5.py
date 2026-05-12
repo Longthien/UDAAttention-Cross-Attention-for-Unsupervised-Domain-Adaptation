@@ -25,6 +25,7 @@ model = dict(
         n_points=12,
         sr_ratios=(8, 4, 2, 1),
         in_channels=[64, 128, 320, 512],
+        drop_path=0.1,
         conv_cfg=None,
         norm_cfg=dict(type='BN', requires_grad=True),
         act_cfg=dict(type='GELU')),
@@ -35,7 +36,7 @@ uda = dict(
     imnet_feature_dist_lambda=0.005,
     imnet_feature_dist_classes=[6, 7, 11, 12, 13, 14, 15, 16, 17, 18],
     imnet_feature_dist_scale_min_ratio=0.75,
-    nce_loss_weight=0.1,
+    nce_loss_weight=0.0,
     nce_loss_temp = 0.07,
     nce_active_classes = [0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 13, 14, 15], # majority + medium classes
     # nce_active_classes = [0, 1, 2, 3, 8, 9, 10, 13], # only majority classes
@@ -63,7 +64,7 @@ runner = dict(type='IterBasedRunner', max_iters=40000)
 checkpoint_config = dict(by_epoch=False, interval=40000, max_keep_ckpts=1)
 evaluation = dict(interval=2000, metric='mIoU', save_best='mIoU')
 # Meta Information for Result Analysis
-name = 'tada_nce0.1_majorclass_baseline_mitb5_40k'
+name = 'tada_baseline_mitb5_40k'
 exp = 'tada'
 name_dataset = 'gta2cityscapes'
 name_architecture = 'daformer_sepaspp_mitb5_crossattn'
